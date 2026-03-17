@@ -1,0 +1,166 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+:root {
+  /* shadcn required tokens */
+  --background: 220 33% 98%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 222 47% 11%;
+  --muted: 220 14% 96%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 220 14% 96%;
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 13% 91%;
+  --input: 220 13% 91%;
+  --ring: 221 83% 53%;
+  --radius: 0.75rem;
+
+  /* PSX custom design tokens — used in dashboard, stock, watchlist pages */
+  --navy:        #0f2b5b;
+  --navy-2:      #162035;
+  --navy-3:      #1e2d47;
+  --navy-mid:    #1a3a6e;
+  --blue:        #1d6bea;
+  --blue-pale:   #eef3fd;
+  --teal:        #0fd4b4;
+  --teal-dim:    #0aaa8f;
+  --teal-pale:   #e6faf7;
+  --teal-glow:   rgba(15, 212, 180, 0.15);
+  --c-white:     #ffffff;
+  --off:         #f5f7fa;
+  --surface:     #f9fafb;
+  --sl-1:        #f1f4f8;
+  --sl-2:        #e4e9f0;
+  --sl-3:        #c8d0dc;
+  --sl-4:        #8d9ab0;
+  --sl-5:        #5a6a82;
+  --sl-6:        #374357;
+  --c-text:      #0b1120;
+  --c-text-2:    #374357;
+  --c-text-3:    #5a6a82;
+  --c-text-4:    #8d9ab0;
+  --c-green:     #00c896;
+  --green-pale:  #e6faf5;
+  --c-red:       #f0384a;
+  --red-pale:    #fff0f2;
+  --c-border:    #e4e9f0;
+  --font:        'Plus Jakarta Sans', sans-serif;
+  --mono:        'JetBrains Mono', monospace;
+  --rad:         12px;
+  --rad-sm:      8px;
+}
+
+/* ── Base reset ── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* ── shadcn compatibility layer ──
+   Tailwind v4 doesn't auto-generate these from theme(),
+   so we define them manually so shadcn components render correctly.
+── */
+.bg-background        { background-color: hsl(var(--background)) !important; }
+.bg-card              { background-color: hsl(var(--card)) !important; }
+.bg-primary           { background-color: hsl(var(--primary)) !important; }
+.bg-secondary         { background-color: hsl(var(--secondary)) !important; }
+.bg-muted             { background-color: hsl(var(--muted)) !important; }
+.bg-accent            { background-color: hsl(var(--accent)) !important; }
+.bg-destructive       { background-color: hsl(var(--destructive)) !important; }
+.bg-popover           { background-color: hsl(var(--popover)) !important; }
+
+.text-foreground           { color: hsl(var(--foreground)) !important; }
+.text-card-foreground      { color: hsl(var(--card-foreground)) !important; }
+.text-primary              { color: hsl(var(--primary)) !important; }
+.text-primary-foreground   { color: hsl(var(--primary-foreground)) !important; }
+.text-secondary-foreground { color: hsl(var(--secondary-foreground)) !important; }
+.text-muted-foreground     { color: hsl(var(--muted-foreground)) !important; }
+.text-accent-foreground    { color: hsl(var(--accent-foreground)) !important; }
+.text-destructive          { color: hsl(var(--destructive)) !important; }
+.text-popover-foreground   { color: hsl(var(--popover-foreground)) !important; }
+
+.border-border             { border-color: hsl(var(--border)) !important; }
+.border-input              { border-color: hsl(var(--input)) !important; }
+.border-primary            { border-color: hsl(var(--primary)) !important; }
+.border-destructive        { border-color: hsl(var(--destructive)) !important; }
+
+.ring-ring                 { --tw-ring-color: hsl(var(--ring)); }
+
+.rounded-lg  { border-radius: var(--radius) !important; }
+.rounded-md  { border-radius: calc(var(--radius) - 2px) !important; }
+.rounded-sm  { border-radius: calc(var(--radius) - 4px) !important; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar         { width: 5px; height: 5px; }
+::-webkit-scrollbar-track   { background: hsl(var(--secondary)); }
+::-webkit-scrollbar-thumb   { background: hsl(var(--border)); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+/* ── Monospace number utility ── */
+.num { font-family: 'JetBrains Mono', monospace; }
+
+/* ── Ticker animation — used on login page and dashboard ── */
+@keyframes ticker {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.ticker-track {
+  animation: ticker 50s linear infinite;
+}
+.ticker-track:hover {
+  animation-play-state: paused;
+}
+
+/* ── Page fade-in animations ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up   { animation: fadeUp 0.4s ease forwards; }
+.fade-up-1 { animation: fadeUp 0.4s ease 0.05s forwards; opacity: 0; }
+.fade-up-2 { animation: fadeUp 0.4s ease 0.10s forwards; opacity: 0; }
+.fade-up-3 { animation: fadeUp 0.4s ease 0.15s forwards; opacity: 0; }
+.fade-up-4 { animation: fadeUp 0.4s ease 0.20s forwards; opacity: 0; }
+.fade-up-5 { animation: fadeUp 0.4s ease 0.25s forwards; opacity: 0; }
+
+@keyframes fadeLeft {
+  from { opacity: 0; transform: translateX(-16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.fade-left   { animation: fadeLeft 0.5s ease forwards; }
+.fade-left-1 { animation: fadeLeft 0.5s ease 0.15s forwards; opacity: 0; }
+.fade-left-2 { animation: fadeLeft 0.5s ease 0.28s forwards; opacity: 0; }
+.fade-left-3 { animation: fadeLeft 0.5s ease 0.41s forwards; opacity: 0; }
+.fade-left-4 { animation: fadeLeft 0.5s ease 0.54s forwards; opacity: 0; }
+
+/* ── Live dot pulse — used in topbar ── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+.pulse-dot {
+  animation: pulse-dot 2s infinite;
+}
