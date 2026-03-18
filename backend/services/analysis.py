@@ -1,725 +1,554 @@
 """
-PSX Stock Analysis Engine
-Computes 12 analysis modules from OHLCV price history.
-All calculations are pure Python/pandas — no external financial API needed.
+PSX Stock Analysis Engine — Extended v2
+20 analysis modules from OHLCV price history.
 """
 from typing import Optional, List, Dict
 import pandas as pd
 import numpy as np
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
-
 def _safe(val, decimals=2):
     try:
-        if val is None:
-            return None
+        if val is None: return None
         f = float(val)
-        if np.isnan(f) or np.isinf(f):
-            return None
+        if np.isnan(f) or np.isinf(f): return None
         return round(f, decimals)
-    except Exception:
-        return None
+    except Exception: return None
 
-
-def _series(closes: List[float]) -> pd.Series:
-    return pd.Series(closes, dtype=float)
+def _series(closes): return pd.Series(closes, dtype=float)
 
 
 # ── 1. Price Performance ──────────────────────────────────────────────────────
-
-def price_performance(history: List[Dict]) -> Dict:
-    if not history or len(history) < 2:
-        return {}
-
+def price_performance(history):
+    if not history or len(history) < 2: return {}
     df = pd.DataFrame(history)
     df["date"]  = pd.to_datetime(df["date"])
     df["close"] = df["close"].astype(float)
     df = df.sort_values("date").reset_index(drop=True)
-
     now = df["close"].iloc[-1]
-
     def pct_return(days):
         cutoff = df["date"].iloc[-1] - pd.Timedelta(days=days)
         sub = df[df["date"] >= cutoff]
-        if len(sub) < 2:
-            return None
+        if len(sub) < 2: return None
         start = sub["close"].iloc[0]
         return _safe(((now - start) / start) * 100) if start else None
-
     daily_ret = df["close"].pct_change().dropna() * 100
-    best_day  = _safe(daily_ret.max()) if not daily_ret.empty else None
-    worst_day = _safe(daily_ret.min()) if not daily_ret.empty else None
-    avg_daily = _safe(daily_ret.mean()) if not daily_ret.empty else None
-
     return {
-        "ret_1w":           pct_return(7),
-        "ret_1m":           pct_return(30),
-        "ret_3m":           pct_return(90),
-        "ret_1y":           pct_return(365),
-        "best_day":         best_day,
-        "worst_day":        worst_day,
-        "avg_daily_return": avg_daily,
-        "positive_days":    int((daily_ret > 0).sum()),
-        "total_days":       int(len(daily_ret)),
+        "ret_1w": pct_return(7), "ret_1m": pct_return(30),
+        "ret_3m": pct_return(90), "ret_1y": pct_return(365),
+        "best_day": _safe(daily_ret.max()) if not daily_ret.empty else None,
+        "worst_day": _safe(daily_ret.min()) if not daily_ret.empty else None,
+        "avg_daily_return": _safe(daily_ret.mean()) if not daily_ret.empty else None,
+        "positive_days": int((daily_ret > 0).sum()),
+        "total_days": int(len(daily_ret)),
     }
 
 
 # ── 2. RSI ────────────────────────────────────────────────────────────────────
-
-def compute_rsi(closes: List[float], period: int = 14) -> Optional[float]:
-    if len(closes) < period + 1:
-        return None
-    s     = _series(closes)
+def compute_rsi(closes, period=14):
+    if len(closes) < period + 1: return None
+    s = _series(closes)
     delta = s.diff()
     gain  = delta.clip(lower=0).rolling(period).mean()
     loss  = (-delta.clip(upper=0)).rolling(period).mean()
     rs    = gain / loss.replace(0, np.nan)
-    rsi   = 100 - (100 / (1 + rs))
-    val   = rsi.iloc[-1]
-    return _safe(val)
+    return _safe((100 - (100 / (1 + rs))).iloc[-1])
 
-
-def rsi_signal(rsi: Optional[float]) -> Dict:
-    if rsi is None:
-        return {"value": None, "signal": "Insufficient data to calculate RSI", "zone": "unknown"}
-    if rsi >= 70:
-        zone   = "overbought"
-        signal = "Consider waiting — stock may be overpriced right now"
-    elif rsi <= 30:
-        zone   = "oversold"
-        signal = "Potential opportunity — stock may be undervalued right now"
-    elif rsi >= 55:
-        zone   = "bullish"
-        signal = "Momentum is positive — buyers are in control"
-    elif rsi <= 45:
-        zone   = "bearish"
-        signal = "Momentum is weakening — sellers have the edge"
-    else:
-        zone   = "neutral"
-        signal = "No strong signal — market is balanced"
+def rsi_signal(rsi):
+    if rsi is None: return {"value": None, "signal": "Insufficient data", "zone": "unknown"}
+    zone, signal = (
+        ("overbought", "Stock may be overpriced — potential pullback ahead") if rsi >= 70 else
+        ("oversold",   "Stock may be oversold — potential bounce ahead")      if rsi <= 30 else
+        ("bullish",    "Momentum positive — buyers in control")               if rsi >= 55 else
+        ("bearish",    "Momentum weakening — sellers have the edge")          if rsi <= 45 else
+        ("neutral",    "Balanced market — no strong signal")
+    )
     return {"value": rsi, "signal": signal, "zone": zone}
 
 
 # ── 3. MACD ───────────────────────────────────────────────────────────────────
-
-def compute_macd(closes: List[float]) -> Dict:
+def compute_macd(closes):
     if len(closes) < 35:
-        return {
-            "macd": None, "signal_line": None,
-            "histogram": None, "crossover": "insufficient data",
-        }
-    s     = _series(closes)
-    ema12 = s.ewm(span=12, adjust=False).mean()
-    ema26 = s.ewm(span=26, adjust=False).mean()
-    macd  = ema12 - ema26
-    sig   = macd.ewm(span=9, adjust=False).mean()
-    hist  = macd - sig
-
-    m_val = _safe(macd.iloc[-1])
-    s_val = _safe(sig.iloc[-1])
-    h_val = _safe(hist.iloc[-1])
-
+        return {"macd": None, "signal_line": None, "histogram": None, "crossover": "insufficient data"}
+    s = _series(closes)
+    macd = s.ewm(span=12, adjust=False).mean() - s.ewm(span=26, adjust=False).mean()
+    sig  = macd.ewm(span=9, adjust=False).mean()
+    hist = macd - sig
     if len(hist) >= 2:
-        prev_h = float(hist.iloc[-2])
-        curr_h = float(hist.iloc[-1])
-        if prev_h < 0 and curr_h > 0:
-            crossover = "bullish_crossover"
-        elif prev_h > 0 and curr_h < 0:
-            crossover = "bearish_crossover"
-        elif curr_h > 0:
-            crossover = "bullish"
-        else:
-            crossover = "bearish"
-    else:
-        crossover = "unknown"
-
-    return {
-        "macd":        m_val,
-        "signal_line": s_val,
-        "histogram":   h_val,
-        "crossover":   crossover,
-    }
+        p, c = float(hist.iloc[-2]), float(hist.iloc[-1])
+        crossover = ("bullish_crossover" if p < 0 and c > 0 else
+                     "bearish_crossover" if p > 0 and c < 0 else
+                     "bullish" if c > 0 else "bearish")
+    else: crossover = "unknown"
+    return {"macd": _safe(macd.iloc[-1]), "signal_line": _safe(sig.iloc[-1]),
+            "histogram": _safe(hist.iloc[-1]), "crossover": crossover}
 
 
 # ── 4. Bollinger Bands ────────────────────────────────────────────────────────
-
-def compute_bollinger(closes: List[float], period: int = 20) -> Dict:
-    if len(closes) < period:
-        return {}
-    s     = _series(closes)
-    sma   = s.rolling(period).mean()
-    std   = s.rolling(period).std()
-    upper = sma + 2 * std
-    lower = sma - 2 * std
-
-    curr  = float(closes[-1])
-    u_val = _safe(upper.iloc[-1])
-    l_val = _safe(lower.iloc[-1])
-    m_val = _safe(sma.iloc[-1])
-
-    if u_val and l_val and u_val != l_val:
-        band_pct = _safe(((curr - l_val) / (u_val - l_val)) * 100)
-    else:
-        band_pct = None
-
-    if band_pct is not None:
-        if band_pct > 80:
-            position = "near_upper"
-            signal   = "Price is near the upper band — could be overbought or breaking out"
-        elif band_pct < 20:
-            position = "near_lower"
-            signal   = "Price is near the lower band — could be oversold or breaking down"
-        else:
-            position = "middle"
-            signal   = "Price is within normal range — no extreme signal"
-    else:
-        position = "unknown"
-        signal   = "Insufficient data"
-
-    return {
-        "upper":             u_val,
-        "middle":            m_val,
-        "lower":             l_val,
-        "band_position_pct": band_pct,
-        "position":          position,
-        "signal":            signal,
-    }
+def compute_bollinger(closes, period=20):
+    if len(closes) < period: return {}
+    s = _series(closes)
+    sma, std = s.rolling(period).mean(), s.rolling(period).std()
+    upper, lower = sma + 2*std, sma - 2*std
+    curr = float(closes[-1])
+    u, l, m = _safe(upper.iloc[-1]), _safe(lower.iloc[-1]), _safe(sma.iloc[-1])
+    band_pct = _safe(((curr - l) / (u - l)) * 100) if u and l and u != l else None
+    bw = _safe(((u - l) / m) * 100) if m and u and l else None
+    position = ("near_upper" if band_pct and band_pct > 80 else
+                "near_lower" if band_pct and band_pct < 20 else "middle")
+    signal   = {"near_upper": "Near upper band — overbought or strong breakout",
+                "near_lower": "Near lower band — oversold or breakdown risk",
+                "middle":     "Within normal range — no extreme signal"}[position]
+    return {"upper": u, "middle": m, "lower": l, "band_position_pct": band_pct,
+            "bandwidth_pct": bw, "position": position, "signal": signal}
 
 
 # ── 5. Volatility ─────────────────────────────────────────────────────────────
-
-def compute_volatility(closes: List[float]) -> Dict:
-    if len(closes) < 5:
-        return {}
-    s          = _series(closes)
-    daily_ret  = s.pct_change().dropna()
-    daily_vol  = _safe(daily_ret.std() * 100)
-    annual_vol = _safe(daily_ret.std() * np.sqrt(252) * 100)
-
-    if daily_vol is None:
-        return {}
-
-    if daily_vol < 1.0:
-        level       = "low"
-        description = "This stock moves less than 1% per day on average — relatively stable"
-    elif daily_vol < 2.0:
-        level       = "moderate"
-        description = "Moderate movement of 1-2% per day — typical for mid-cap stocks"
-    elif daily_vol < 3.5:
-        level       = "high"
-        description = "High volatility — significant price swings of 2-3.5% daily"
-    else:
-        level       = "very_high"
-        description = "Very high volatility — large swings above 3.5% daily, higher risk"
-
-    risk_score = min(100, int(daily_vol * 25))
-
-    return {
-        "daily_pct":   daily_vol,
-        "annual_pct":  annual_vol,
-        "level":       level,
-        "description": description,
-        "risk_score":  risk_score,
-    }
+def compute_volatility(closes):
+    if len(closes) < 5: return {}
+    s = _series(closes)
+    dr = s.pct_change().dropna()
+    dv = _safe(dr.std() * 100)
+    av = _safe(dr.std() * np.sqrt(252) * 100)
+    if dv is None: return {}
+    level = ("low" if dv < 1.0 else "moderate" if dv < 2.0 else "high" if dv < 3.5 else "very_high")
+    descs = {"low": "Moves <1%/day — stable", "moderate": "1-2%/day — typical blue chip",
+             "high": "2-3.5%/day — elevated risk", "very_high": ">3.5%/day — highly speculative"}
+    return {"daily_pct": dv, "annual_pct": av, "level": level,
+            "description": descs[level], "risk_score": min(100, int(dv * 25))}
 
 
 # ── 6. Volume Analysis ────────────────────────────────────────────────────────
-
-def volume_analysis(history: List[Dict]) -> Dict:
+def volume_analysis(history):
     df = pd.DataFrame(history)
-    if "volume" not in df.columns or df["volume"].isna().all():
-        return {"available": False}
-
+    if "volume" not in df.columns or df["volume"].isna().all(): return {"available": False}
     df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
     df["close"]  = pd.to_numeric(df["close"],  errors="coerce")
-
-    # Skip if all volumes are zero
-    if df["volume"].sum() == 0:
-        return {"available": False}
-
-    avg_vol   = float(df["volume"].mean())
-    curr_vol  = float(df["volume"].iloc[-1])
-    vol_ratio = _safe((curr_vol / avg_vol) * 100) if avg_vol > 0 else None
-
+    if df["volume"].sum() == 0: return {"available": False}
+    avg, curr = float(df["volume"].mean()), float(df["volume"].iloc[-1])
+    vol_ratio = _safe((curr / avg) * 100) if avg > 0 else None
+    vol_trend = "unknown"
     if len(df) >= 10:
-        recent    = float(df["volume"].iloc[-5:].mean())
-        prior     = float(df["volume"].iloc[-10:-5].mean())
-        vol_trend = "increasing" if recent > prior * 1.1 else \
-                    "decreasing" if recent < prior * 0.9 else "stable"
-    else:
-        vol_trend = "unknown"
-
+        r, p = float(df["volume"].iloc[-5:].mean()), float(df["volume"].iloc[-10:-5].mean())
+        vol_trend = "increasing" if r > p*1.1 else "decreasing" if r < p*0.9 else "stable"
     price_up = bool(df["close"].iloc[-1] > df["close"].iloc[-5]) if len(df) >= 5 else None
-    vol_up   = curr_vol > avg_vol
-
+    vol_up = curr > avg
     if price_up is not None:
-        if price_up and vol_up:
-            divergence = "bullish_confirmation"
-            div_signal = "Price rising with high volume — strong buying interest"
-        elif price_up and not vol_up:
-            divergence = "weak_rally"
-            div_signal = "Price rising but volume is low — rally may not be sustainable"
-        elif not price_up and vol_up:
-            divergence = "bearish_confirmation"
-            div_signal = "Price falling with high volume — strong selling pressure"
-        else:
-            divergence = "weak_decline"
-            div_signal = "Price falling but volume is low — weak selling pressure"
-    else:
-        divergence = "unknown"
-        div_signal = "Insufficient data"
-
-    return {
-        "available":  True,
-        "current":    int(curr_vol),
-        "average":    int(avg_vol),
-        "ratio_pct":  vol_ratio,
-        "trend":      vol_trend,
-        "divergence": divergence,
-        "div_signal": div_signal,
-    }
+        div = ("bullish_confirmation" if price_up and vol_up else
+               "weak_rally"           if price_up and not vol_up else
+               "bearish_confirmation" if not price_up and vol_up else "weak_decline")
+        sig = {"bullish_confirmation": "Price rising + high volume — strong conviction",
+               "weak_rally": "Price rising + low volume — weak conviction",
+               "bearish_confirmation": "Price falling + high volume — strong selling",
+               "weak_decline": "Price falling + low volume — weak selling"}[div]
+    else: div, sig = "unknown", "Insufficient data"
+    return {"available": True, "current": int(curr), "average": int(avg),
+            "ratio_pct": vol_ratio, "trend": vol_trend, "divergence": div, "div_signal": sig}
 
 
 # ── 7. Support & Resistance ───────────────────────────────────────────────────
-
-def support_resistance(closes: List[float]) -> Dict:
-    if len(closes) < 20:
-        return {}
-
-    s    = pd.Series(closes)
+def support_resistance(closes):
+    if len(closes) < 20: return {}
+    s = pd.Series(closes)
     curr = float(closes[-1])
-
     window = min(10, len(closes) // 4)
-    highs  = s.rolling(window, center=True).max()
-    lows   = s.rolling(window, center=True).min()
-
-    resistance_levels = sorted(set(
-        round(float(v), 0) for v in highs.dropna().unique() if float(v) > curr
-    ))[:3]
-    support_levels = sorted(set(
-        round(float(v), 0) for v in lows.dropna().unique() if float(v) < curr
-    ), reverse=True)[:3]
-
-    high_p = float(s.max())
-    low_p  = float(s.min())
-    pivot  = _safe((high_p + low_p + curr) / 3)
-    r1     = _safe(2 * pivot - low_p)  if pivot else None
-    s1     = _safe(2 * pivot - high_p) if pivot else None
-
-    nearest_res = resistance_levels[0] if resistance_levels else None
-    nearest_sup = support_levels[0]    if support_levels    else None
-
-    pct_to_res = _safe(((nearest_res - curr) / curr) * 100) if nearest_res else None
-    pct_to_sup = _safe(((curr - nearest_sup) / curr) * 100) if nearest_sup else None
-
-    return {
-        "pivot":               pivot,
-        "resistance_1":        r1,
-        "support_1":           s1,
-        "nearest_resistance":  nearest_res,
-        "nearest_support":     nearest_sup,
-        "pct_to_resistance":   pct_to_res,
-        "pct_to_support":      pct_to_sup,
-    }
+    highs, lows = s.rolling(window, center=True).max(), s.rolling(window, center=True).min()
+    res = sorted(set(round(float(v), 0) for v in highs.dropna().unique() if float(v) > curr))[:3]
+    sup = sorted(set(round(float(v), 0) for v in lows.dropna().unique()  if float(v) < curr), reverse=True)[:3]
+    hp, lp = float(s.max()), float(s.min())
+    pivot = _safe((hp + lp + curr) / 3)
+    nr = res[0] if res else None
+    ns = sup[0] if sup else None
+    return {"pivot": pivot,
+            "resistance_1": _safe(2*pivot - lp) if pivot else None,
+            "support_1":    _safe(2*pivot - hp) if pivot else None,
+            "nearest_resistance": nr, "nearest_support": ns,
+            "pct_to_resistance": _safe(((nr - curr) / curr) * 100) if nr else None,
+            "pct_to_support":    _safe(((curr - ns)  / curr) * 100) if ns else None}
 
 
 # ── 8. Moving Averages ────────────────────────────────────────────────────────
-
-def moving_averages(closes: List[float]) -> Dict:
-    s    = _series(closes)
+def moving_averages(closes):
+    s = _series(closes)
     curr = float(closes[-1])
-
-    result: Dict = {}
+    result = {}
     for p in [10, 20, 50, 200]:
         if len(closes) >= p:
-            ma  = _safe(s.rolling(p).mean().iloc[-1])
-            pct = _safe(((curr - ma) / ma) * 100) if ma else None
+            ma = _safe(s.rolling(p).mean().iloc[-1])
             result[f"ma{p}"]     = ma
-            result[f"ma{p}_pct"] = pct
-
-    # Golden / Death cross (needs 201 data points)
+            result[f"ma{p}_pct"] = _safe(((curr - ma) / ma) * 100) if ma else None
     if "ma50" in result and "ma200" in result and len(closes) >= 201:
-        ma50_prev  = _safe(s.rolling(50).mean().iloc[-2])
-        ma200_prev = _safe(s.rolling(200).mean().iloc[-2])
-        ma50_curr  = result["ma50"]
-        ma200_curr = result["ma200"]
-        if all(v is not None for v in [ma50_prev, ma200_prev, ma50_curr, ma200_curr]):
-            if ma50_prev < ma200_prev and ma50_curr > ma200_curr:
-                result["cross"] = "golden_cross"
-            elif ma50_prev > ma200_prev and ma50_curr < ma200_curr:
-                result["cross"] = "death_cross"
-            elif ma50_curr > ma200_curr:
-                result["cross"] = "bullish_alignment"
-            else:
-                result["cross"] = "bearish_alignment"
-
-    # Trend signal based on how many MAs price is above
-    above_count = sum(
-        1 for p in [10, 20, 50]
-        if result.get(f"ma{p}") is not None and curr > result[f"ma{p}"]
-    )
-    if above_count == 3:
-        result["trend_signal"]      = "strongly_bullish"
-        result["trend_description"] = "Price is above all major moving averages — strong uptrend"
-    elif above_count == 2:
-        result["trend_signal"]      = "bullish"
-        result["trend_description"] = "Price is above most moving averages — mild uptrend"
-    elif above_count == 1:
-        result["trend_signal"]      = "bearish"
-        result["trend_description"] = "Price is below most moving averages — mild downtrend"
-    else:
-        result["trend_signal"]      = "strongly_bearish"
-        result["trend_description"] = "Price is below all major moving averages — strong downtrend"
-
+        m50p  = _safe(s.rolling(50).mean().iloc[-2])
+        m200p = _safe(s.rolling(200).mean().iloc[-2])
+        m50c, m200c = result["ma50"], result["ma200"]
+        if all(v is not None for v in [m50p, m200p, m50c, m200c]):
+            result["cross"] = ("golden_cross"      if m50p < m200p and m50c > m200c else
+                               "death_cross"       if m50p > m200p and m50c < m200c else
+                               "bullish_alignment" if m50c > m200c else "bearish_alignment")
+    above = sum(1 for p in [10, 20, 50] if result.get(f"ma{p}") and curr > result[f"ma{p}"])
+    sigs = ["strongly_bearish","bearish","bullish","strongly_bullish"]
+    desc = ["Below all MAs — strong downtrend","Below most MAs — mild downtrend",
+            "Above most MAs — mild uptrend","Above all MAs — strong uptrend"]
+    result["trend_signal"] = sigs[above]
+    result["trend_description"] = desc[above]
     return result
 
 
-# ── 9. Trend Strength (ADX) ───────────────────────────────────────────────────
-
-def compute_adx(history: List[Dict], period: int = 14) -> Dict:
+# ── 9. ADX ────────────────────────────────────────────────────────────────────
+def compute_adx(history, period=14):
     if len(history) < period * 2:
-        return {"adx": None, "strength": "insufficient data", "direction": "unknown",
-                "description": "Not enough data to calculate trend strength."}
-
+        return {"adx": None, "strength": "insufficient data", "direction": "unknown", "description": "Need more data."}
     df = pd.DataFrame(history)
     for col in ["high", "low", "close"]:
-        if col not in df.columns:
-            df[col] = pd.to_numeric(df["close"], errors="coerce")
-        else:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    high  = df["high"]
-    low   = df["low"]
-    close = df["close"]
-
-    plus_dm  = high.diff().clip(lower=0)
-    minus_dm = (-low.diff()).clip(lower=0)
-    tr = pd.concat([
-        high - low,
-        (high - close.shift()).abs(),
-        (low  - close.shift()).abs(),
-    ], axis=1).max(axis=1)
-
-    atr      = tr.rolling(period).mean()
+        df[col] = pd.to_numeric(df.get(col, df["close"]), errors="coerce")
+    plus_dm  = df["high"].diff().clip(lower=0)
+    minus_dm = (-df["low"].diff()).clip(lower=0)
+    tr  = pd.concat([df["high"]-df["low"], (df["high"]-df["close"].shift()).abs(),
+                     (df["low"]-df["close"].shift()).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean()
     plus_di  = 100 * (plus_dm.rolling(period).mean()  / atr.replace(0, np.nan))
     minus_di = 100 * (minus_dm.rolling(period).mean() / atr.replace(0, np.nan))
-    dx       = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
-    adx      = dx.rolling(period).mean()
-
-    adx_val = _safe(adx.iloc[-1])
-    pdi_val = _safe(plus_di.iloc[-1])
-    mdi_val = _safe(minus_di.iloc[-1])
-
-    if adx_val is None:
-        return {"adx": None, "strength": "insufficient data", "direction": "unknown",
-                "description": "Not enough data to calculate ADX."}
-
-    if adx_val > 50:
-        strength    = "very_strong"
-        description = "Very strong trend in place — high conviction directional move"
-    elif adx_val > 25:
-        strength    = "strong"
-        description = "Strong trend — good momentum, trend is likely to continue"
-    elif adx_val > 20:
-        strength    = "developing"
-        description = "Trend is developing — watch for confirmation"
-    else:
-        strength    = "weak"
-        description = "Weak or no trend — stock is ranging sideways"
-
-    direction = "up" if (pdi_val and mdi_val and pdi_val > mdi_val) else "down"
-
-    return {
-        "adx":         adx_val,
-        "plus_di":     pdi_val,
-        "minus_di":    mdi_val,
-        "strength":    strength,
-        "direction":   direction,
-        "description": description,
-    }
+    adx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)).rolling(period).mean()
+    av, pdi, mdi = _safe(adx.iloc[-1]), _safe(plus_di.iloc[-1]), _safe(minus_di.iloc[-1])
+    if av is None: return {"adx": None, "strength": "insufficient data", "direction": "unknown", "description": ""}
+    strength = ("very_strong" if av > 50 else "strong" if av > 25 else "developing" if av > 20 else "weak")
+    return {"adx": av, "plus_di": pdi, "minus_di": mdi, "strength": strength,
+            "direction": "up" if pdi and mdi and pdi > mdi else "down",
+            "description": {"very_strong":"Very strong trend","strong":"Strong trend",
+                            "developing":"Developing trend","weak":"Weak/no trend — ranging"}[strength]}
 
 
-# ── 10. 52-Week Analysis ──────────────────────────────────────────────────────
-
-def week52_analysis(closes: List[float]) -> Dict:
-    if len(closes) < 2:
-        return {}
-
-    year_closes = closes[-252:] if len(closes) >= 252 else closes
-    high_52w    = float(max(year_closes))
-    low_52w     = float(min(year_closes))
-    curr        = float(closes[-1])
-
-    if high_52w == low_52w:
-        return {}
-
-    position_pct = _safe(((curr - low_52w)  / (high_52w - low_52w)) * 100)
-    from_high    = _safe(((curr - high_52w) / high_52w) * 100)
-    from_low     = _safe(((curr - low_52w)  / low_52w)  * 100)
-
-    if position_pct is not None and position_pct > 80:
-        zone = "near_highs"
-        desc = "Trading near 52-week highs — strong momentum but watch for resistance"
-    elif position_pct is not None and position_pct < 20:
-        zone = "near_lows"
-        desc = "Trading near 52-week lows — potential value zone but weak momentum"
-    else:
-        zone = "middle_range"
-        desc = "Trading in the middle of its yearly range — no extreme signal"
-
-    return {
-        "high_52w":      _safe(high_52w),
-        "low_52w":       _safe(low_52w),
-        "position_pct":  position_pct,
-        "from_high_pct": from_high,
-        "from_low_pct":  from_low,
-        "zone":          zone,
-        "description":   desc,
-    }
+# ── 10. 52-Week ───────────────────────────────────────────────────────────────
+def week52_analysis(closes):
+    if len(closes) < 2: return {}
+    yr = closes[-252:] if len(closes) >= 252 else closes
+    hi, lo, curr = float(max(yr)), float(min(yr)), float(closes[-1])
+    if hi == lo: return {}
+    pos = _safe(((curr - lo) / (hi - lo)) * 100)
+    zone = "near_highs" if pos and pos > 80 else "near_lows" if pos and pos < 20 else "middle_range"
+    return {"high_52w": _safe(hi), "low_52w": _safe(lo), "position_pct": pos,
+            "from_high_pct": _safe(((curr - hi) / hi) * 100),
+            "from_low_pct":  _safe(((curr - lo) / lo) * 100), "zone": zone,
+            "description": {"near_highs":"Near 52W highs — strong momentum","near_lows":"Near 52W lows — potential value zone","middle_range":"Mid yearly range — neutral"}[zone]}
 
 
-# ── 11. Price Momentum Score ──────────────────────────────────────────────────
-
-def momentum_score(closes: List[float]) -> Dict:
-    if len(closes) < 20:
-        return {}
-
-    curr         = float(closes[-1])
-    score_parts  = []
-    weight_parts = []
-
-    for period, weight in [(5, 0.2), (10, 0.2), (20, 0.3), (60, 0.3)]:
+# ── 11. Momentum Score ────────────────────────────────────────────────────────
+def momentum_score(closes):
+    if len(closes) < 20: return {}
+    curr, parts, weights = float(closes[-1]), [], []
+    for period, weight in [(5,0.2),(10,0.2),(20,0.3),(60,0.3)]:
         if len(closes) >= period:
             past = float(closes[-period])
-            roc  = ((curr - past) / past) * 100 if past != 0 else 0
-            norm = min(100.0, max(0.0, 50.0 + roc * 2.0))
-            score_parts.append(norm * weight)
-            weight_parts.append(weight)
-
-    if not score_parts:
-        return {}
-
-    total_weight = sum(weight_parts)
-    momentum     = _safe(sum(score_parts) / total_weight) if total_weight > 0 else None
-
-    if momentum is None:
-        return {}
-
-    if momentum >= 65:
-        level = "strong_positive"
-        desc  = "Strong positive momentum — price has been consistently rising"
-    elif momentum >= 55:
-        level = "positive"
-        desc  = "Positive momentum — upward bias in recent weeks"
-    elif momentum >= 45:
-        level = "neutral"
-        desc  = "Neutral momentum — no clear directional bias"
-    elif momentum >= 35:
-        level = "negative"
-        desc  = "Negative momentum — downward bias in recent weeks"
-    else:
-        level = "strong_negative"
-        desc  = "Strong negative momentum — price has been consistently falling"
-
-    roc_5d  = _safe(((curr - closes[-5])  / closes[-5])  * 100) if len(closes) >= 5  else None
-    roc_20d = _safe(((curr - closes[-20]) / closes[-20]) * 100) if len(closes) >= 20 else None
-
-    return {
-        "score":       momentum,
-        "level":       level,
-        "description": desc,
-        "roc_5d":      roc_5d,
-        "roc_20d":     roc_20d,
-    }
+            parts.append(min(100.0, max(0.0, 50.0 + (((curr-past)/past)*100 if past else 0)*2.0)) * weight)
+            weights.append(weight)
+    if not parts: return {}
+    score = _safe(sum(parts) / sum(weights))
+    if score is None: return {}
+    level = ("strong_positive" if score >= 65 else "positive" if score >= 55 else
+             "neutral" if score >= 45 else "negative" if score >= 35 else "strong_negative")
+    return {"score": score, "level": level,
+            "description": {"strong_positive":"Price consistently rising","positive":"Upward bias",
+                            "neutral":"No clear bias","negative":"Downward bias",
+                            "strong_negative":"Price consistently falling"}[level],
+            "roc_5d":  _safe(((curr-closes[-5])/closes[-5])*100)  if len(closes)>=5  else None,
+            "roc_20d": _safe(((curr-closes[-20])/closes[-20])*100) if len(closes)>=20 else None}
 
 
-# ── 12. Composite Score ───────────────────────────────────────────────────────
+# ── 12. Stochastic Oscillator ─────────────────────────────────────────────────
+def compute_stochastic(history, k_period=14, d_period=3):
+    if len(history) < k_period + d_period:
+        return {"k": None, "d": None, "zone": "unknown", "signal": "Insufficient data"}
+    df = pd.DataFrame(history)
+    for col in ["high","low","close"]:
+        df[col] = pd.to_numeric(df.get(col, df["close"]), errors="coerce")
+    lo = df["low"].rolling(k_period).min()
+    hi = df["high"].rolling(k_period).max()
+    k = 100 * (df["close"] - lo) / (hi - lo).replace(0, np.nan)
+    d = k.rolling(d_period).mean()
+    kv, dv = _safe(k.iloc[-1]), _safe(d.iloc[-1])
+    if kv is None: return {"k": None, "d": None, "zone": "unknown", "signal": "Insufficient data"}
+    zone = "overbought" if kv > 80 else "oversold" if kv < 20 else "bullish" if kv > 50 else "bearish"
+    crossover = "none"
+    if len(k) >= 2 and len(d) >= 2:
+        if float(k.iloc[-2]) < float(d.iloc[-2]) and kv > dv: crossover = "bullish_crossover"
+        elif float(k.iloc[-2]) > float(d.iloc[-2]) and kv < dv: crossover = "bearish_crossover"
+    return {"k": kv, "d": dv, "zone": zone, "crossover": crossover,
+            "signal": (f"Overbought at {kv:.1f} — selling may increase" if zone == "overbought" else
+                       f"Oversold at {kv:.1f} — buying opportunity may form" if zone == "oversold" else
+                       f"Bullish crossover at {kv:.1f}" if crossover == "bullish_crossover" else
+                       f"Bearish crossover at {kv:.1f}" if crossover == "bearish_crossover" else
+                       f"Stochastic at {kv:.1f}")}
 
-def composite_score(modules: Dict) -> Dict:
-    # Each entry: (label, score_0_to_100, weight)
-    scores: List[tuple] = []
 
-    # RSI
-    rsi_val = modules.get("rsi", {}).get("value")
-    if rsi_val is not None:
-        rsi_score = float(min(100, max(0, rsi_val)))
-        if rsi_val > 75 or rsi_val < 25:
-            rsi_score = 50.0  # extreme = reset to neutral
-        scores.append(("RSI", rsi_score, 0.15))
+# ── 13. Williams %R ───────────────────────────────────────────────────────────
+def compute_williams_r(history, period=14):
+    if len(history) < period: return {"value": None, "zone": "unknown", "signal": "Insufficient data"}
+    df = pd.DataFrame(history)
+    for col in ["high","low","close"]:
+        df[col] = pd.to_numeric(df.get(col, df["close"]), errors="coerce")
+    hi = df["high"].rolling(period).max()
+    lo = df["low"].rolling(period).min()
+    wr = -100 * (hi - df["close"]) / (hi - lo).replace(0, np.nan)
+    val = _safe(wr.iloc[-1])
+    if val is None: return {"value": None, "zone": "unknown", "signal": "Insufficient data"}
+    zone = "overbought" if val > -20 else "oversold" if val < -80 else "neutral"
+    return {"value": val, "zone": zone,
+            "signal": (f"Overbought ({val:.1f}) — near period highs, possible reversal" if val > -20 else
+                       f"Oversold ({val:.1f}) — near period lows, possible bounce" if val < -80 else
+                       f"Neutral ({val:.1f}) — between extremes")}
 
-    # MACD
-    macd_map = {
-        "bullish_crossover": 80.0, "bullish": 65.0,
-        "bearish_crossover": 20.0, "bearish": 35.0,
-    }
-    macd_score = macd_map.get(modules.get("macd", {}).get("crossover", ""), 50.0)
-    scores.append(("MACD", macd_score, 0.15))
 
-    # Moving averages trend
-    ma_map = {
-        "strongly_bullish": 85.0, "bullish": 65.0,
-        "bearish": 35.0,          "strongly_bearish": 15.0,
-    }
-    ma_score = ma_map.get(modules.get("moving_averages", {}).get("trend_signal", ""), 50.0)
-    scores.append(("MA Trend", ma_score, 0.20))
+# ── 14. ATR ───────────────────────────────────────────────────────────────────
+def compute_atr(history, period=14):
+    if len(history) < period + 1: return {"atr": None, "signal": "Insufficient data"}
+    df = pd.DataFrame(history)
+    for col in ["high","low","close"]:
+        df[col] = pd.to_numeric(df.get(col, df["close"]), errors="coerce")
+    tr = pd.concat([df["high"]-df["low"], (df["high"]-df["close"].shift()).abs(),
+                    (df["low"]-df["close"].shift()).abs()], axis=1).max(axis=1)
+    val = _safe(tr.rolling(period).mean().iloc[-1])
+    curr = float(df["close"].iloc[-1])
+    pct  = _safe((val / curr) * 100) if val and curr else None
+    return {"atr": val, "atr_pct": pct,
+            "signal": f"Expected daily move: PKR {val:.2f} ({pct:.1f}% of price). {'High movement' if pct and pct > 3 else 'Normal range'}." if val else "Insufficient data"}
 
-    # Momentum
-    mom_val = modules.get("momentum", {}).get("score")
-    if mom_val is not None:
-        scores.append(("Momentum", float(mom_val), 0.20))
 
-    # Volatility (lower vol = safer = higher score)
-    vol_map = {"low": 75.0, "moderate": 60.0, "high": 40.0, "very_high": 20.0}
-    vol_score = vol_map.get(modules.get("volatility", {}).get("level", ""), 50.0)
-    scores.append(("Volatility", vol_score, 0.10))
+# ── 15. OBV ───────────────────────────────────────────────────────────────────
+def compute_obv(history):
+    df = pd.DataFrame(history)
+    if "volume" not in df.columns or df["volume"].sum() == 0: return {"available": False}
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
+    df["close"]  = pd.to_numeric(df["close"],  errors="coerce")
+    running, obv = 0, []
+    for i in range(len(df)):
+        if i == 0: obv.append(0); continue
+        if df["close"].iloc[i] > df["close"].iloc[i-1]: running += df["volume"].iloc[i]
+        elif df["close"].iloc[i] < df["close"].iloc[i-1]: running -= df["volume"].iloc[i]
+        obv.append(running)
+    obv_s = pd.Series(obv)
+    if len(obv_s) < 10: return {"available": False}
+    pt = "up" if df["close"].iloc[-1] > df["close"].iloc[-10] else "down"
+    ot = "up" if obv_s.iloc[-1] > obv_s.iloc[-10] else "down"
+    conf = ("confirmed" if pt == ot else "divergence" if pt == "up" else "bullish_divergence")
+    sigs = {"confirmed":           "Volume confirms the price trend",
+            "divergence":          "Price rising but OBV falling — rally lacks conviction ⚠️",
+            "bullish_divergence":  "Price falling but OBV rising — possible accumulation"}
+    return {"available": True, "current_obv": int(obv_s.iloc[-1]),
+            "price_trend": pt, "obv_trend": ot, "confirmation": conf, "signal": sigs.get(conf, "")}
 
-    # Volume divergence
-    div_map = {
-        "bullish_confirmation": 80.0, "weak_rally": 55.0,
-        "weak_decline": 45.0,         "bearish_confirmation": 20.0,
-    }
-    div_score = div_map.get(modules.get("volume", {}).get("divergence", ""), 50.0)
-    scores.append(("Volume", div_score, 0.10))
 
-    # 52-week position
-    w52_map = {"near_highs": 75.0, "middle_range": 55.0, "near_lows": 35.0}
-    w52_score = w52_map.get(modules.get("week52", {}).get("zone", ""), 50.0)
-    scores.append(("52W Position", w52_score, 0.10))
+# ── 16. Fibonacci Levels ──────────────────────────────────────────────────────
+def fibonacci_levels(closes):
+    if len(closes) < 20: return {}
+    s = pd.Series(closes)
+    hi, lo, curr = float(s.max()), float(s.min()), float(closes[-1])
+    diff = hi - lo
+    levels = {k: _safe(hi - r*diff) for k, r in
+              [("0.0",0),("23.6",0.236),("38.2",0.382),("50.0",0.5),("61.8",0.618),("78.6",0.786),("100.0",1)]}
+    nearest_key, nearest_val, nearest_dist = "", None, float("inf")
+    for k, v in levels.items():
+        if v and abs(curr-v) < nearest_dist:
+            nearest_dist, nearest_val, nearest_key = abs(curr-v), v, k
+    return {"levels": levels, "nearest_level": nearest_val, "nearest_key": nearest_key,
+            "pct_to_nearest": _safe((nearest_dist/curr)*100) if nearest_val else None,
+            "high": _safe(hi), "low": _safe(lo),
+            "signal": f"Near {nearest_key}% Fibonacci level (PKR {nearest_val:.2f}) — key zone watched by traders worldwide" if nearest_val else ""}
+
+
+# ── 17. Candlestick Patterns ──────────────────────────────────────────────────
+def candlestick_patterns(history):
+    if len(history) < 3: return {"patterns": [], "overall": "neutral", "signal": "Insufficient data"}
+    df = pd.DataFrame(history)
+    for col in ["open","high","low","close"]:
+        df[col] = pd.to_numeric(df.get(col, df["close"]), errors="coerce")
+    patterns = []
+    o,h,l,c  = float(df["open"].iloc[-1]),float(df["high"].iloc[-1]),float(df["low"].iloc[-1]),float(df["close"].iloc[-1])
+    body, rng = abs(c-o), h-l
+    if rng > 0 and body/rng < 0.1:
+        patterns.append({"name":"Doji","type":"neutral","description":"Open≈Close — market indecision. Reversal may follow."})
+    if rng > 0 and body/rng < 0.3 and (min(o,c)-l) > 2*body and (h-max(o,c)) < body:
+        patterns.append({"name":"Hammer","type":"bullish","description":"Long lower wick — buyers rejected the lows. Bullish reversal signal."})
+    if rng > 0 and body/rng < 0.3 and (h-max(o,c)) > 2*body and (min(o,c)-l) < body:
+        patterns.append({"name":"Shooting Star","type":"bearish","description":"Long upper wick — sellers took control at highs. Bearish reversal."})
+    if len(df) >= 2:
+        o2, c2 = float(df["open"].iloc[-2]), float(df["close"].iloc[-2])
+        if c2 < o2 and c > o and c > o2 and o < c2:
+            patterns.append({"name":"Bullish Engulfing","type":"bullish","description":"Green candle engulfs prior red — strong bullish reversal."})
+        if c2 > o2 and c < o and c < o2 and o > c2:
+            patterns.append({"name":"Bearish Engulfing","type":"bearish","description":"Red candle engulfs prior green — strong bearish reversal."})
+    if rng > 0 and body/rng > 0.95:
+        typ = "bullish" if c > o else "bearish"
+        patterns.append({"name":f"{'Bullish' if typ=='bullish' else 'Bearish'} Marubozu","type":typ,
+                         "description":f"No wicks — {'buyers' if typ=='bullish' else 'sellers'} dominated entire session."})
+    bull_c = sum(1 for p in patterns if p["type"]=="bullish")
+    bear_c = sum(1 for p in patterns if p["type"]=="bearish")
+    overall = "bullish" if bull_c > bear_c else "bearish" if bear_c > bull_c else "neutral"
+    return {"patterns": patterns, "overall": overall,
+            "signal": f"{len(patterns)} pattern(s) detected in latest candles" if patterns else "No major candlestick patterns detected"}
+
+
+# ── 18. Risk-Adjusted Return ──────────────────────────────────────────────────
+def risk_adjusted_return(closes):
+    if len(closes) < 20: return {}
+    dr = _series(closes).pct_change().dropna()
+    avg, std = float(dr.mean()), float(dr.std())
+    ann_ret = avg * 252 * 100
+    ann_vol = std * np.sqrt(252) * 100
+    rf = 12.0  # Pakistan risk-free rate ~12%
+    sharpe = _safe((ann_ret - rf) / ann_vol) if ann_vol > 0 else None
+    if sharpe is None: return {}
+    grade = "excellent" if sharpe > 1 else "good" if sharpe > 0.5 else "fair" if sharpe > 0 else "poor"
+    descs = {"excellent":"Excellent — reward far exceeds risk","good":"Good risk-adjusted return",
+             "fair":"Fair — some reward for the risk","poor":"Poor — not compensated for volatility"}
+    return {"sharpe": sharpe, "ann_return_pct": _safe(ann_ret), "ann_vol_pct": _safe(ann_vol),
+            "grade": grade, "description": descs[grade]}
+
+
+# ── 19. Price Channel (Donchian) ──────────────────────────────────────────────
+def price_channel(history, period=20):
+    if len(history) < period: return {}
+    df = pd.DataFrame(history)
+    for col in ["high","low","close"]:
+        df[col] = pd.to_numeric(df.get(col, df["close"]), errors="coerce")
+    upper = float(df["high"].rolling(period).max().iloc[-1])
+    lower = float(df["low"].rolling(period).min().iloc[-1])
+    mid   = (upper + lower) / 2
+    curr  = float(df["close"].iloc[-1])
+    if upper == lower: return {}
+    pos = _safe(((curr - lower) / (upper - lower)) * 100)
+    sig = ("Near channel HIGH — potential upward breakout" if pos and pos > 80 else
+           "Near channel LOW — potential bounce or breakdown" if pos and pos < 20 else
+           "Middle of channel — no clear breakout signal")
+    return {"upper": _safe(upper), "lower": _safe(lower), "middle": _safe(mid), "position_pct": pos, "signal": sig}
+
+
+# ── 20. VWAP ─────────────────────────────────────────────────────────────────
+def compute_vwap(history):
+    df = pd.DataFrame(history)
+    if "volume" not in df.columns or df["volume"].sum() == 0: return {"available": False}
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
+    df["close"]  = pd.to_numeric(df["close"],  errors="coerce")
+    df["high"]   = pd.to_numeric(df.get("high",  df["close"]), errors="coerce")
+    df["low"]    = pd.to_numeric(df.get("low",   df["close"]), errors="coerce")
+    tp = (df["high"] + df["low"] + df["close"]) / 3
+    vwap_val = _safe((tp * df["volume"]).cumsum().iloc[-1] / df["volume"].cumsum().iloc[-1])
+    curr = float(df["close"].iloc[-1])
+    if vwap_val is None: return {"available": False}
+    pct = _safe(((curr - vwap_val) / vwap_val) * 100)
+    above = curr > vwap_val
+    return {"available": True, "vwap": vwap_val, "above_vwap": above, "pct_from_vwap": pct,
+            "signal": f"Price {'above' if above else 'below'} VWAP (PKR {vwap_val:.2f}) by {abs(pct or 0):.1f}%. {'Bullish institutional bias' if above else 'Bearish — price below average traded price'}"}
+
+
+# ── Composite Score ───────────────────────────────────────────────────────────
+def composite_score(modules):
+    scores = []
+    rv = modules.get("rsi",{}).get("value")
+    if rv is not None:
+        rs = float(min(100, max(0, rv)))
+        if rv > 75 or rv < 25: rs = 50.0
+        scores.append(("RSI", rs, 0.10))
+    macd_map = {"bullish_crossover":85,"bullish":65,"bearish_crossover":15,"bearish":35}
+    scores.append(("MACD", float(macd_map.get(modules.get("macd",{}).get("crossover",""),50)), 0.10))
+    ma_map = {"strongly_bullish":85,"bullish":65,"bearish":35,"strongly_bearish":15}
+    scores.append(("MA Trend", float(ma_map.get(modules.get("moving_averages",{}).get("trend_signal",""),50)), 0.12))
+    mom = modules.get("momentum",{}).get("score")
+    if mom is not None: scores.append(("Momentum", float(mom), 0.12))
+    stoch = modules.get("stochastic",{})
+    sm = {"overbought":25,"oversold":75,"bullish":65,"bearish":35,"neutral":50}
+    if stoch.get("k") is not None: scores.append(("Stochastic", float(sm.get(stoch.get("zone",""),50)), 0.08))
+    wr = modules.get("williams_r",{}).get("value")
+    if wr is not None:
+        wr_score = 75 if wr < -80 else 25 if wr > -20 else 50
+        scores.append(("Williams %R", float(wr_score), 0.06))
+    vol_map = {"low":75,"moderate":60,"high":40,"very_high":20}
+    scores.append(("Volatility", float(vol_map.get(modules.get("volatility",{}).get("level",""),50)), 0.07))
+    div_map = {"bullish_confirmation":80,"weak_rally":55,"weak_decline":45,"bearish_confirmation":20}
+    scores.append(("Volume", float(div_map.get(modules.get("volume",{}).get("divergence",""),50)), 0.07))
+    w52_map = {"near_highs":75,"middle_range":55,"near_lows":35}
+    scores.append(("52W Zone", float(w52_map.get(modules.get("week52",{}).get("zone",""),50)), 0.07))
+    adx = modules.get("trend_strength",{})
+    as_ = {"very_strong":75,"strong":70,"developing":55,"weak":40}
+    if adx.get("adx"):
+        base = float(as_.get(adx.get("strength",""),50))
+        scores.append(("ADX", base if adx.get("direction")=="up" else 100-base, 0.06))
+    obv = modules.get("obv",{})
+    om = {"confirmed":70,"divergence":30,"bullish_divergence":70}
+    if obv.get("available"): scores.append(("OBV", float(om.get(obv.get("confirmation",""),50)), 0.07))
+    vwap = modules.get("vwap",{})
+    if vwap.get("available"): scores.append(("VWAP", 65 if vwap.get("above_vwap") else 35, 0.08))
 
     if not scores:
-        return {
-            "score": 50, "grade": "C", "color": "amber", "verdict": "Neutral",
-            "breakdown": [],
-            "suggestion": {
-                "outlook":    "Insufficient data for analysis.",
-                "signals":    [],
-                "disclaimer": "Educational purposes only. Not financial advice.",
-            },
-        }
-
-    total_weight = sum(item[2] for item in scores)
-    weighted_sum = sum(item[1] * item[2] for item in scores)
-    final_score  = round(weighted_sum / total_weight, 1) if total_weight > 0 else 50.0
-
-    if final_score >= 75:
-        grade, color, verdict = "A", "green",  "Strong"
-    elif final_score >= 60:
-        grade, color, verdict = "B", "teal",   "Positive"
-    elif final_score >= 45:
-        grade, color, verdict = "C", "amber",  "Neutral"
-    elif final_score >= 30:
-        grade, color, verdict = "D", "orange", "Weak"
-    else:
-        grade, color, verdict = "F", "red",    "Bearish"
-
-    suggestion = _build_suggestion(modules, final_score, grade)
-
-    return {
-        "score":     final_score,
-        "grade":     grade,
-        "color":     color,
-        "verdict":   verdict,
-        "breakdown": [
-            {"factor": item[0], "score": round(item[1]), "weight": item[2]}
-            for item in scores
-        ],
-        "suggestion": suggestion,
-    }
+        return {"score":50,"grade":"C","color":"amber","verdict":"Neutral","breakdown":[],
+                "suggestion":{"outlook":"Insufficient data.","signals":[],"disclaimer":""}}
+    tw = sum(i[2] for i in scores)
+    final = round(sum(i[1]*i[2] for i in scores)/tw, 1) if tw > 0 else 50.0
+    grade, color, verdict = (
+        ("A","green","Strong")   if final >= 75 else
+        ("B","teal","Positive")  if final >= 60 else
+        ("C","amber","Neutral")  if final >= 45 else
+        ("D","orange","Weak")    if final >= 30 else
+        ("F","red","Bearish")
+    )
+    return {"score": final, "grade": grade, "color": color, "verdict": verdict,
+            "breakdown": [{"factor":i[0],"score":round(i[1]),"weight":i[2]} for i in scores],
+            "suggestion": _build_suggestion(modules, final)}
 
 
-def _build_suggestion(modules: Dict, score: float, grade: str) -> Dict:
-    rsi  = modules.get("rsi",              {})
-    macd = modules.get("macd",             {})
-    ma   = modules.get("moving_averages",  {})
-    vol  = modules.get("volatility",       {})
-
+def _build_suggestion(modules, score):
     signals = []
-
-    rsi_val = rsi.get("value")
-    if rsi_val is not None:
-        if rsi_val > 70:
-            signals.append("RSI is overbought — the stock has risen fast and may pause or pull back")
-        elif rsi_val < 30:
-            signals.append("RSI is oversold — selling may be overdone and a bounce is possible")
-        elif rsi_val > 55:
-            signals.append("RSI shows positive momentum — buyers are in control")
-        else:
-            signals.append("RSI shows neutral momentum — no strong directional signal")
-
-    macd_c = macd.get("crossover", "")
-    if macd_c == "bullish_crossover":
-        signals.append("MACD just crossed bullish — a new uptrend may be starting")
-    elif macd_c == "bearish_crossover":
-        signals.append("MACD just crossed bearish — momentum may be turning negative")
-    elif macd_c == "bullish":
-        signals.append("MACD confirms upward momentum is active")
-    elif macd_c == "bearish":
-        signals.append("MACD shows negative momentum is active")
-
-    ma_sig = ma.get("trend_signal", "")
-    if ma_sig == "strongly_bullish":
-        signals.append("Price is above all major moving averages — strong confirmed uptrend")
-    elif ma_sig == "strongly_bearish":
-        signals.append("Price is below all major moving averages — strong confirmed downtrend")
-
-    vol_level = vol.get("level", "")
-    if vol_level in ("high", "very_high"):
-        signals.append(
-            f"{vol_level.replace('_', ' ').title()} volatility — bigger price swings, "
-            "suitable for experienced investors only"
-        )
-
-    if score >= 70:
-        outlook = "The overall technical picture looks positive. Multiple indicators are aligned in the bullish direction."
-    elif score >= 55:
-        outlook = "The technical picture is mildly positive. More signals are bullish than bearish, but confirmation is needed."
-    elif score >= 45:
-        outlook = "Mixed signals — the stock is in a neutral zone with no clear direction currently."
-    elif score >= 30:
-        outlook = "The technical picture is showing weakness. More signals are bearish than bullish."
-    else:
-        outlook = "Multiple indicators are aligned negatively. The technical picture is bearish."
-
-    return {
-        "outlook":    outlook,
-        "signals":    signals[:4],
-        "disclaimer": (
-            "This is a technical analysis summary for educational purposes only. "
-            "It is not financial advice. Always do your own research before investing."
-        ),
-    }
+    rv = modules.get("rsi",{}).get("value")
+    if rv: signals.append(f"RSI {rv:.1f}: {'overbought' if rv>70 else 'oversold' if rv<30 else 'positive momentum' if rv>55 else 'neutral'}")
+    mc = modules.get("macd",{}).get("crossover","")
+    if mc: signals.append({"bullish_crossover":"MACD bullish crossover — new uptrend","bearish_crossover":"MACD bearish crossover — downtrend","bullish":"MACD positive momentum","bearish":"MACD negative momentum"}.get(mc, ""))
+    stoch = modules.get("stochastic",{})
+    if stoch.get("k"): signals.append(f"Stochastic %K={stoch['k']:.1f} — {stoch.get('zone','').replace('_',' ')}")
+    wr = modules.get("williams_r",{}).get("value")
+    if wr: signals.append(f"Williams %R={wr:.1f}: {'overbought' if wr>-20 else 'oversold' if wr<-80 else 'neutral'}")
+    obv = modules.get("obv",{})
+    if obv.get("available") and obv.get("confirmation")=="divergence": signals.append("OBV divergence — volume does not confirm price ⚠️")
+    vwap = modules.get("vwap",{})
+    if vwap.get("available"): signals.append(f"Price {'above' if vwap.get('above_vwap') else 'below'} VWAP — {'bullish' if vwap.get('above_vwap') else 'bearish'} institutional bias")
+    cp = modules.get("candlestick",{}).get("patterns",[])
+    if cp: signals.append(f"Candlestick: {cp[0]['name']} detected — {cp[0]['description'][:60]}")
+    outlook = (
+        "Strong technical setup — most indicators aligned bullish." if score >= 70 else
+        "Mildly positive — more bullish than bearish signals." if score >= 55 else
+        "Mixed signals — no clear direction. Wait for confirmation." if score >= 45 else
+        "Technical weakness — majority of signals lean bearish." if score >= 30 else
+        "Strong bearish alignment — high risk environment."
+    )
+    return {"outlook": outlook, "signals": [s for s in signals if s][:5],
+            "disclaimer": "Educational analysis only. Not financial advice. Always do your own research."}
 
 
-# ── MASTER FUNCTION ───────────────────────────────────────────────────────────
-
-def run_full_analysis(history: List[Dict], fundamentals: Optional[Dict] = None) -> Dict:
-    """
-    Run all 12 analysis modules on price history.
-    Returns structured dict ready to serve as API response.
-    """
+# ── MASTER ────────────────────────────────────────────────────────────────────
+def run_full_analysis(history, fundamentals=None):
     if not history or len(history) < 5:
-        return {"error": "Insufficient price history for analysis"}
-
+        return {"error": "Insufficient price history"}
     closes = [float(h["close"]) for h in history]
-
-    modules: Dict = {
-        "performance":       price_performance(history),
-        "rsi":               rsi_signal(compute_rsi(closes)),
-        "macd":              compute_macd(closes),
-        "bollinger":         compute_bollinger(closes),
-        "volatility":        compute_volatility(closes),
-        "volume":            volume_analysis(history),
+    modules = {
+        "performance":        price_performance(history),
+        "rsi":                rsi_signal(compute_rsi(closes)),
+        "macd":               compute_macd(closes),
+        "bollinger":          compute_bollinger(closes),
+        "volatility":         compute_volatility(closes),
+        "volume":             volume_analysis(history),
         "support_resistance": support_resistance(closes),
-        "moving_averages":   moving_averages(closes),
-        "trend_strength":    compute_adx(history),
-        "week52":            week52_analysis(closes),
-        "momentum":          momentum_score(closes),
+        "moving_averages":    moving_averages(closes),
+        "trend_strength":     compute_adx(history),
+        "week52":             week52_analysis(closes),
+        "momentum":           momentum_score(closes),
+        "stochastic":         compute_stochastic(history),
+        "williams_r":         compute_williams_r(history),
+        "atr":                compute_atr(history),
+        "obv":                compute_obv(history),
+        "fibonacci":          fibonacci_levels(closes),
+        "candlestick":        candlestick_patterns(history),
+        "risk_adjusted":      risk_adjusted_return(closes),
+        "price_channel":      price_channel(history),
+        "vwap":               compute_vwap(history),
     }
-
-    if fundamentals:
-        modules["fundamentals"] = fundamentals
-
+    if fundamentals: modules["fundamentals"] = fundamentals
     modules["composite"] = composite_score(modules)
-
     return modules
